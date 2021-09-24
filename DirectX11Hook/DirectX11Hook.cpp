@@ -37,6 +37,11 @@
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 
+
+#define DLL_INJECT_CreateRemoteThread		1
+#define DLL_INJECT_SetWindowsHookEx			2
+#define DLL_INJECT_METHOD DLL_INJECT_CreateRemoteThread
+
 // D3X HOOK DEFINITIONS
 typedef HRESULT(__fastcall *IDXGISwapChainPresent)(IDXGISwapChain *pSwapChain, UINT SyncInterval, UINT Flags);
 typedef void(__stdcall *ID3D11DrawIndexed)(ID3D11DeviceContext* pContext, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation);
@@ -396,6 +401,8 @@ HRESULT GetDeviceAndCtxFromSwapchain(IDXGISwapChain *pSwapChain, ID3D11Device **
 
 HRESULT __fastcall Present(IDXGISwapChain *pChain, UINT SyncInterval, UINT Flags)
 {
+	//std::cout << "call the hooked present" <<std::endl;
+
 	if (!g_bInitialised) {
 		g_PresentHooked = true;
 		std::cout << "\t[+] Present Hook called by first time" << std::endl;
@@ -666,7 +673,10 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	case DLL_PROCESS_ATTACH:
 	{
 		DisableThreadLibraryCalls(hModule);
+#if (DLL_INJECT_METHOD == DLL_INJECT_CreateRemoteThread)
+		// for unsafeInjectDll
 		CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)main, NULL, NULL, NULL);
+#endif
 	}
 	case DLL_THREAD_ATTACH:
 	case DLL_THREAD_DETACH:
@@ -676,3 +686,26 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	return TRUE;
 }
 
+#if (DLL_INJECT_METHOD == DLL_INJECT_SetWindowsHookEx)
+HHOOK g_injectHook = nullptr;
+extern "C" __declspec(dllexport) LRESULT CALLBACK msg_hook_proc_ov(int code,
+	WPARAM wparam, LPARAM lparam)
+{
+	static bool hooking = true;
+	MSG* msg = (MSG*)lparam;
+
+	if (hooking && msg->message == (WM_USER + 432))
+	{
+		typedef BOOL(WINAPI* fn)(HHOOK);
+		std::cout << "@trace threadId:" << ::GetCurrentThreadId() << std::endl;
+
+		g_injectHook = (HHOOK)msg->lParam;
+
+		// for safeInjectDll
+		CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)main, NULL, NULL, NULL);
+		hooking = false;
+	}
+
+	return CallNextHookEx(0, code, wparam, lparam);
+}
+#endif

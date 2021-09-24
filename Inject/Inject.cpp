@@ -8,6 +8,10 @@
 #include <string>
 #include "WindowUtil.h"
 
+#define DLL_INJECT_CreateRemoteThread     1
+#define DLL_INJECT_SetWindowsHookEx       2
+#define DLL_INJECT_METHOD DLL_INJECT_CreateRemoteThread
+
 int g_waitCount = 20;
 
 bool unsafeInjectDll(DWORD dwProcessId, PCWSTR pszLibFile)
@@ -153,6 +157,8 @@ DWORD getProcMainThreadId(DWORD dwProcID)
 
 bool safeInjectDll(DWORD pid, DWORD threadId, const std::wstring& dll)
 {
+    //When adding a hook to the target application, the DLL will be loaded by the target application.
+
     typedef HHOOK(WINAPI* fn)(int, HOOKPROC, HINSTANCE, DWORD);
     HMODULE user32 = GetModuleHandleW(L"USER32");
     fn set_windows_hook_ex;
@@ -164,11 +170,11 @@ bool safeInjectDll(DWORD pid, DWORD threadId, const std::wstring& dll)
     {
         if (!lib)
         {
-            std::wcout << L"LoadLibraryW failed:" << dll;
+            std::wcout << L"LoadLibraryW failed:" << dll << std::endl;
         }
         if (!user32)
         {
-            std::wcout << L"USER32 module not found:" << dll;
+            std::wcout << L"USER32 module not found:" << dll << std::endl;
         }
         return false;
     }
@@ -181,7 +187,7 @@ bool safeInjectDll(DWORD pid, DWORD threadId, const std::wstring& dll)
 
     if (!proc)
     {
-        std::wcout << L"GetProcAddress msg_hook_proc_ov failed";
+        std::wcout << L"GetProcAddress msg_hook_proc_ov failed" << std::endl;
         return false;
     }
 
@@ -192,23 +198,27 @@ bool safeInjectDll(DWORD pid, DWORD threadId, const std::wstring& dll)
     }
 
     std::wcout << "hook "
-        << "pid: " << pid << ", thread:" << threadId;
+        << "pid: " << pid << ", thread:" << threadId << std::endl;
 
     hook = set_windows_hook_ex(WH_GETMESSAGE, (HOOKPROC)proc, lib, threadId);
     if (!hook)
     {
         DWORD err = GetLastError();
-        std::wcout << L"SetWindowsHookEx failed: " << err;
+        std::wcout << L"SetWindowsHookEx failed: " << err << std::endl;
         return false;
     }
 
+    // TODO: when this function exist, target app exists due to a crash at g_pSwapChain->Present( 0, 0 )
+    //       need further debug
     for (auto i = 0; i < g_waitCount; i++)
+    //while (1)
     {
         Sleep(500);
-        std::wcout << L"PostThreadMessage to hook window";
+        std::wcout << L"PostThreadMessage to hook window" << std::endl;
 
         PostThreadMessage(threadId, WM_USER + 432, 0, (LPARAM)hook);
     }
+
     return true;
 }
 
@@ -218,8 +228,11 @@ bool startInject(DWORD pid, DWORD threadId, const std::wstring& dll)
 
     if (pid > 0)
     {
-        //if (safeInjectDll(pid, threadId, dll))
+#if (DLL_INJECT_METHOD == DLL_INJECT_CreateRemoteThread)
         if (unsafeInjectDll(pid, dll.c_str()))
+#elif (DLL_INJECT_METHOD == DLL_INJECT_SetWindowsHookEx)
+        if (safeInjectDll(pid, threadId, dll))
+#endif
         {
             succeed = true;
         }
